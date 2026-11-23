@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <title>Oklevélküldés: szervezeti címtár</title>
 <!--
-  szervezet-cimtar  v1.0  2026-11-23
+  szervezet-cimtar  v1.1  2026-11-23
   NKE HHK KTVK, oklevélküldés: szervezeti egység -> e-mail cím címtár
 
   BEÁLLÍTÁS
@@ -243,7 +243,7 @@
   </div>
 </main>
 
-<footer>Verzió 1.0, 2026-11-23</footer>
+<footer>Verzió 1.1, 2026-11-23</footer>
 
 <div class="toast" id="toast" role="status" hidden></div>
 
@@ -284,9 +284,9 @@
 
 /* ===== BEÁLLÍTÁS ===== */
 const CONFIG = {
-  API_URL: "",                               // n8n webhook címe; üresen: bemutató mód
+  API_URL: "https://castor81.app.n8n.cloud/webhook/cimtar-api", // n8n webhook címe; üresen: bemutató mód
   FALLBACK_DEFAULT: "VargaTamas@uni-nke.hu", // tartalék cím alapértéke
-  VERSION: "1.0",
+  VERSION: "1.1",
   VERSION_DATE: "2026-11-23"
 };
 const DEMO = !CONFIG.API_URL;

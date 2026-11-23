@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Oklevélküldés: szervezeti címtár</title>
+<!--
+  szervezet-cimtar  v1.1  2026-11-23
+  NKE HHK KTVK, oklevélküldés: szervezeti egység -> e-mail cím címtár
+
+  BEÁLLÍTÁS
+  1) Írd be az n8n webhook címét a CONFIG.API_URL mezőbe (lent a script elején).
+     Üresen hagyva az oldal bemutató módban fut, az adatokat csak a böngészőben tárolja.
+  2) A belépőkódot az n8n ellenőrzi, az oldalban nincs titok.
+
+  API (POST, JSON, minden kérés tartalmazza: action, code)
+    {action:"list"}                           -> {ok:true, records:[...], fallback:"cim@..."}
+    {action:"upsert", record:{...}}           -> {ok:true}
+    {action:"bulkUpsert", records:[...]}      -> {ok:true}
+    {action:"delete", id:"..."}               -> {ok:true}
+    {action:"setFallback", fallback:"cim@"}   -> {ok:true}
+    Hiba esetén: HTTP 401 (hibás kód) vagy {ok:false, error:"szöveg"}
+  Rekord: {id, name, keywords:[...], emails:[...], active:true|false, note:""}
+-->
+<style>
+  :root{
+    --bg:#E8EBE4;
+    --panel:#F6F7F3;
+    --field:#FFFFFF;
+    --ink:#1E2820;
+    --muted:#566057;
+    --line:#C5CCBE;
+    --olive:#5B563F;
+    --olive-hover:#48442F;
+    --gold:#B8903F;
+    --gold-text:#7A5C1B;
+    --danger:#9B2C25;
+    --serif:Georgia,"Times New Roman",serif;
+    --sans:"Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--sans)}
+  button,input,textarea{font:inherit;color:inherit}
+  :focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+
+  .demo{background:#F3E7C8;color:#4A3A0E;padding:8px 24px;font-size:14px;border-bottom:1px solid #DCC98F}
+  .demo[hidden]{display:none}
+
+  .top{max-width:1180px;margin:0 auto;padding:0 28px;display:flex;gap:28px;align-items:flex-start}
+  .ribbon{position:relative;flex:none;width:96px;min-height:150px;background:var(--olive);color:#fff;
+    padding:26px 10px 40px;text-align:center;
+    clip-path:polygon(0 0,100% 0,100% 100%,50% calc(100% - 20px),0 100%)}
+  .ribbon::before{content:"";position:absolute;left:12px;right:12px;top:12px;height:2px;background:var(--gold)}
+  .ribbon svg{display:block;margin:0 auto 10px}
+  .ribbon span{font:16px/1.2 var(--serif)}
+  .headline{flex:1;padding-top:26px;min-width:0}
+  h1{font:400 clamp(26px,3.4vw,38px)/1.15 var(--serif);margin:0 0 8px;letter-spacing:-.01em}
+  .lead{margin:0;color:var(--muted);max-width:60ch}
+
+  .fallback{flex:none;width:340px;margin-top:26px;border-top:2px solid var(--gold);padding-top:10px}
+  .fallback label{display:block;font-weight:600;margin-bottom:2px}
+  .fallback .hint{margin:0 0 8px}
+  .fallback .inline{display:flex;gap:8px}
+  .fallback input{flex:1;min-width:0}
+
+  main{max-width:1180px;margin:30px auto 0;padding:0 28px 48px;display:grid;grid-template-columns:340px 1fr;gap:32px;align-items:start}
+
+  .hint{color:var(--muted);font-size:13px;margin:4px 0 0}
+  label{display:block;font-weight:600;margin:14px 0 4px}
+  label:first-child{margin-top:0}
+  input[type=text],input[type=email],input[type=password],textarea{
+    width:100%;background:var(--field);border:1px solid #9AA394;border-radius:3px;padding:9px 10px}
+  textarea{resize:vertical;min-height:64px}
+  input::placeholder,textarea::placeholder{color:#7C857A}
+  .check{display:flex;gap:10px;align-items:flex-start;font-weight:400;margin-top:16px}
+  .check input{margin-top:4px;width:18px;height:18px;accent-color:var(--olive)}
+
+  .btn{border:1px solid var(--olive);background:var(--olive);color:#fff;border-radius:3px;padding:9px 16px;cursor:pointer;font-weight:600}
+  .btn:hover{background:var(--olive-hover)}
+  .btn.ghost{background:transparent;color:var(--olive)}
+  .btn.ghost:hover{background:#E1E4DA}
+  .btn.warn{background:var(--danger);border-color:var(--danger)}
+  .btn[disabled]{opacity:.6;cursor:progress}
+  .link{background:none;border:0;padding:4px 2px;cursor:pointer;color:var(--olive);text-decoration:underline;text-underline-offset:3px}
+  .link:hover{color:var(--ink)}
+  .link.danger{color:var(--danger)}
+
+  .form{position:sticky;top:16px;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:20px}
+  .form h2{font:400 21px/1.2 var(--serif);margin:0 0 16px}
+  .form .actions{display:flex;gap:10px;margin-top:20px}
+  .error{color:var(--danger);font-weight:600;margin:14px 0 0;min-height:0}
+  .error:empty{display:none}
+
+  .tester{border-left:4px solid var(--gold);background:var(--panel);padding:16px 18px;margin-bottom:30px}
+  .tester h2,.directory h2{font:400 21px/1.2 var(--serif);margin:0 0 4px}
+  .tester input{margin-top:10px}
+  .verdict{margin:12px 0 0;min-height:24px}
+  .verdict strong{font-weight:600}
+  .verdict.ok{color:#2D4A25}
+  .verdict.bad{color:var(--danger)}
+  .verdict.idle{color:var(--muted)}
+
+  .bar{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin:14px 0 6px}
+  .bar .grow{flex:1;min-width:200px}
+  .bar label{margin:0 0 4px}
+  .count{color:var(--muted);font-size:13px;margin:0 0 8px}
+
+  .list{list-style:none;margin:0;padding:0;border-top:2px solid var(--ink)}
+  .row{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1.4fr) auto;gap:16px;padding:14px 4px;border-bottom:1px solid var(--line);align-items:start}
+  .row.off .who strong{color:var(--muted)}
+  .who{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .who strong{font:600 16px/1.3 var(--sans);overflow-wrap:anywhere}
+  .kw{color:var(--muted);font-size:13px;overflow-wrap:anywhere}
+  .mail{display:flex;flex-direction:column;gap:2px;overflow-wrap:anywhere}
+  .act{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+  .state{font-size:13px;padding:2px 8px;border-radius:2px;border:1px solid}
+  .state.on{color:#2D4A25;border-color:#9DB594;background:#E7EFE2}
+  .state.paused{color:#6B5A1E;border-color:#CDB873;background:#F5EDD3}
+  .empty{padding:28px 4px;color:var(--muted);max-width:56ch}
+  .empty strong{color:var(--ink);display:block;margin-bottom:4px}
+
+  .tools{display:flex;gap:8px}
+
+  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 18px;border-radius:3px;
+    box-shadow:0 6px 24px rgba(0,0,0,.25);z-index:30;max-width:90vw}
+  .toast[hidden]{display:none}
+
+  dialog{border:1px solid var(--line);border-radius:4px;padding:22px;max-width:520px;width:calc(100% - 32px);background:var(--panel);color:var(--ink)}
+  dialog::backdrop{background:rgba(30,40,32,.5)}
+  dialog h2{font:400 21px/1.2 var(--serif);margin:0 0 10px}
+  dialog p{margin:0 0 12px}
+  dialog .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
+  dialog textarea{min-height:150px;font-family:ui-monospace,Consolas,monospace;font-size:13px}
+
+  .gate{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;
+    background:rgba(30,40,32,.55);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);padding:16px}
+  .gate[hidden]{display:none}
+  .gate form{background:var(--panel);border-top:3px solid var(--gold);border-radius:3px;padding:26px;width:min(380px,100%)}
+  .gate h2{font:400 22px/1.2 var(--serif);margin:0 0 6px}
+  .gate p{margin:0 0 14px;color:var(--muted)}
+  .gate .btn{margin-top:16px;width:100%}
+
+  footer{max-width:1180px;margin:0 auto;padding:0 28px 28px;color:var(--muted);font-size:13px}
+
+  @media (max-width:980px){
+    .top{flex-wrap:wrap}
+    .fallback{width:100%;margin-top:0;order:3}
+    main{grid-template-columns:1fr}
+    .form{position:static}
+  }
+  @media (max-width:640px){
+    .top,main,footer{padding-left:16px;padding-right:16px}
+    .ribbon{width:76px;min-height:124px;padding-top:22px}
+    .row{grid-template-columns:1fr;gap:8px}
+    .act{justify-content:flex-start}
+  }
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+
+<div class="demo" id="demo" hidden>
+  Bemutató mód: a minta adatok csak ebben a böngészőben vannak. Éles használathoz írd be az n8n webhook címét a fájl elején a CONFIG.API_URL mezőbe.
+</div>
+
+<header class="top">
+  <div class="ribbon" aria-hidden="true">
+    <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"><rect x="3" y="5" width="18" height="14" rx="1.5"/><path d="M3.5 6.5 12 13l8.5-6.5"/></svg>
+    <span>Címtár</span>
+  </div>
+  <div class="headline">
+    <h1>Oklevélküldés: szervezeti címtár</h1>
+    <p class="lead">Itt adod meg, hogy melyik szervezeti egység oklevele melyik e-mail címre érkezzen. A rendszer a hallgató által beírt névből és szervezetből azonosítja az egységet.</p>
+  </div>
+  <section class="fallback" aria-labelledby="fb-label">
+    <label id="fb-label" for="fb-input">Tartalék cím</label>
+    <p class="hint">Ide megy az oklevél, ha nincs egyezés, több egység is egyezik, vagy hiba történik.</p>
+    <div class="inline">
+      <input type="email" id="fb-input" autocomplete="off" spellcheck="false">
+      <button type="button" class="btn ghost" id="fb-save">Mentés</button>
+    </div>
+  </section>
+</header>
+
+<main id="app">
+  <form class="form" id="form" novalidate aria-labelledby="form-title">
+    <h2 id="form-title">Új szervezeti egység</h2>
+    <input type="hidden" id="f-id">
+
+    <label for="f-name">Szervezeti egység neve</label>
+    <input type="text" id="f-name" placeholder="MH THP" autocomplete="off" maxlength="80">
+
+    <label for="f-keywords">Egyéb írásmódok</label>
+    <input type="text" id="f-keywords" placeholder="THP, Támogató Parancsnokság" autocomplete="off">
+    <p class="hint">Vesszővel elválasztva. A név mindig illeszkedik, ide a rövidítéseket és a gyakori változatokat vedd fel.</p>
+
+    <label for="f-emails">E-mail cím</label>
+    <textarea id="f-emails" placeholder="titkarsag@pelda.hu" spellcheck="false"></textarea>
+    <p class="hint">Több címet vesszővel vagy új sorral válassz el.</p>
+
+    <label for="f-note">Megjegyzés</label>
+    <input type="text" id="f-note" autocomplete="off" maxlength="120">
+
+    <label class="check" for="f-active">
+      <input type="checkbox" id="f-active" checked>
+      <span>Aktív: erre az egységre küld a rendszer</span>
+    </label>
+
+    <p class="error" id="form-error" role="alert"></p>
+
+    <div class="actions">
+      <button type="submit" class="btn" id="f-save">Mentés</button>
+      <button type="button" class="btn ghost" id="f-cancel" hidden>Mégse</button>
+    </div>
+  </form>
+
+  <div>
+    <section class="tester" aria-labelledby="t-title">
+      <h2 id="t-title">Illesztés próba</h2>
+      <p class="hint" style="margin-top:0">Írj be egy példát arra, amit a hallgató a mezőbe gépelne. Az oldal ugyanazzal a szabállyal mutatja az eredményt, mint az n8n.</p>
+      <label for="t-input" class="sr" style="position:absolute;left:-9999px">Példa a hallgató bevitelére</label>
+      <input type="text" id="t-input" placeholder="Dr. Kiss János ezds., MH THP" autocomplete="off">
+      <p class="verdict idle" id="t-out" aria-live="polite">Itt jelenik meg, melyik egységhez sorolná a rendszer.</p>
+    </section>
+
+    <section class="directory" aria-labelledby="d-title">
+      <h2 id="d-title">Felvett egységek</h2>
+      <div class="bar">
+        <div class="grow">
+          <label for="q">Keresés</label>
+          <input type="text" id="q" placeholder="Név, rövidítés vagy e-mail cím" autocomplete="off">
+        </div>
+        <div class="tools">
+          <button type="button" class="btn ghost" id="bulk-open">Tömeges felvitel</button>
+          <button type="button" class="btn ghost" id="export">Exportálás CSV-be</button>
+        </div>
+      </div>
+      <p class="count" id="count" aria-live="polite"></p>
+      <ul class="list" id="list"></ul>
+    </section>
+  </div>
+</main>
+
+<footer>Verzió 1.1, 2026-11-23</footer>
+
+<div class="toast" id="toast" role="status" hidden></div>
+
+<dialog id="del-dialog" aria-labelledby="del-title">
+  <h2 id="del-title">Törlöd az egységet?</h2>
+  <p id="del-text"></p>
+  <div class="actions">
+    <button type="button" class="btn ghost" id="del-cancel">Mégse</button>
+    <button type="button" class="btn warn" id="del-confirm">Törlés</button>
+  </div>
+</dialog>
+
+<dialog id="bulk-dialog" aria-labelledby="bulk-title">
+  <h2 id="bulk-title">Tömeges felvitel</h2>
+  <p>Soronként egy egység, pontosvesszővel tagolva: név; egyéb írásmódok (vesszővel); e-mail cím(ek). Az azonos nevű egységet felülírja.</p>
+  <label for="bulk-text" style="position:absolute;left:-9999px">Egységek soronként</label>
+  <textarea id="bulk-text" spellcheck="false" placeholder="MH THP; THP, Támogató Parancsnokság; titkarsag@pelda.hu&#10;MH BTKK; BTKK; btkk@pelda.hu, kepzes@pelda.hu"></textarea>
+  <p class="error" id="bulk-error" role="alert"></p>
+  <div class="actions">
+    <button type="button" class="btn ghost" id="bulk-cancel">Mégse</button>
+    <button type="button" class="btn" id="bulk-save">Mentés</button>
+  </div>
+</dialog>
+
+<div class="gate" id="gate" hidden>
+  <form id="gate-form" aria-labelledby="gate-title">
+    <h2 id="gate-title">Belépés</h2>
+    <p>A címtár szerkesztéséhez add meg a belépőkódot.</p>
+    <label for="gate-code">Belépőkód</label>
+    <input type="password" id="gate-code" autocomplete="current-password">
+    <p class="error" id="gate-error" role="alert"></p>
+    <button type="submit" class="btn">Belépés</button>
+  </form>
+</div>
+
+<script>
+"use strict";
+
+/* ===== BEÁLLÍTÁS ===== */
+const CONFIG = {
+  API_URL: "https://castor81.app.n8n.cloud/webhook/cimtar-api", // n8n webhook címe; üresen: bemutató mód
+  FALLBACK_DEFAULT: "VargaTamas@uni-nke.hu", // tartalék cím alapértéke
+  VERSION: "1.1",
+  VERSION_DATE: "2026-11-23"
+};
+const DEMO = !CONFIG.API_URL;
+
+/* ===== SEGÉDFÜGGVÉNYEK ===== */
+const $ = (s) => document.querySelector(s);
+function h(tag, props, ...kids) {
+  const e = document.createElement(tag);
+  if (props) for (const [k, v] of Object.entries(props)) {
+    if (k === "class") e.className = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (v !== false && v != null) e.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat()) {
+    if (kid == null || kid === false) continue;
+    e.append(kid.nodeType ? kid : document.createTextNode(kid));
+  }
+  return e;
+}
+const uid = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+  : "id-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const EMAIL_RE = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
+
+function splitList(text, sep) {
+  return String(text || "").split(sep).map((s) => s.trim()).filter(Boolean);
+}
+function parseEmails(text) {
+  const seen = new Set(), out = [];
+  for (const e of splitList(text, /[,;\s]+/)) {
+    const k = e.toLowerCase();
+    if (!seen.has(k)) { seen.add(k); out.push(e); }
+  }
+  return out;
+}
+function parseKeywords(text) {
+  const seen = new Set(), out = [];
+  for (const k of splitList(text, /[,;\n]+/)) {
+    const key = k.toLowerCase();
+    if (!seen.has(key)) { seen.add(key); out.push(k); }
+  }
+  return out;
+}
+
+let toastTimer = 0;
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.hidden = true; }, 3200);
+}
+
+/* ===== ILLESZTÉSI SZABÁLY (az n8n Code node ugyanezt használja) ===== */
+function norm(s) {
+  return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+function unitTerms(r) {
+  return [r.name, ...(r.keywords || [])]
+    .map((t) => ({ raw: t, n: norm(t) })).filter((t) => t.n);
+}
+function termMatches(textNorm, tokens, termNorm) {
+  if ((" " + textNorm + " ").includes(" " + termNorm + " ")) return true;
+  const compact = termNorm.replace(/ /g, "");
+  if (compact.length < 3) return false;
+  for (let i = 0; i < tokens.length; i++) {
+    let acc = "";
+    for (let j = i; j < Math.min(tokens.length, i + 4); j++) {
+      acc += tokens[j];
+      if (acc === compact) return true;
+      if (acc.length >= compact.length) break;
+    }
+  }
+  return false;
+}
+function findUnit(text, records) {
+  const textNorm = norm(text);
+  const tokens = textNorm ? textNorm.split(" ") : [];
+  const hits = [];
+  for (const r of records) {
+    if (!r.active) continue;
+    let best = null;
+    for (const t of unitTerms(r)) {
+      if (termMatches(textNorm, tokens, t.n) && (!best || t.n.length > best.n.length)) best = t;
+    }
+    if (best) hits.push({ record: r, term: best.raw, n: best.n });
+  }
+  if (!hits.length) return { status: "none" };
+  // Ha az egyik találat kifejezése része egy másiknak (pl. "MH" és "MH THP"), a hosszabb nyer.
+  // Ha ezután is több egység marad, a találat nem egyértelmű.
+  const top = hits.filter((a) => !hits.some((b) => b !== a && b.n !== a.n && (" " + b.n + " ").includes(" " + a.n + " ")));
+  if (top.length > 1) return { status: "ambiguous", hits: top };
+  return { status: "match", hit: top[0] };
+}
+/* Ütközés ellenőrzése mentés előtt: két egység nem használhat azonos írásmódot. */
+function findConflict(record, others) {
+  const mine = unitTerms(record);
+  for (const o of others) {
+    if (o.id === record.id) continue;
+    for (const t of unitTerms(o)) {
+      for (const m of mine) {
+        if (m.n === t.n || m.n.replace(/ /g, "") === t.n.replace(/ /g, "")) {
+          return `A(z) „${m.raw}” írásmód már a(z) ${o.name} egységhez tartozik.`;
+        }
+      }
+    }
+  }
+  return "";
+}
+
+/* ===== ADATRÉTEG ===== */
+const state = { code: "", records: [], fallback: CONFIG.FALLBACK_DEFAULT, query: "", loaded: false, error: "" };
+const LS_KEY = "szervezet-cimtar-demo-v1";
+let demoData = null;
+
+function demoSeed() {
+  return {
+    fallback: CONFIG.FALLBACK_DEFAULT,
+    records: [
+      { id: uid(), name: "MH THP", keywords: ["THP"], emails: ["thp@pelda.hu"], active: true, note: "Minta adat" },
+      { id: uid(), name: "MH BTKK", keywords: ["BTKK"], emails: ["btkk@pelda.hu", "kepzes@pelda.hu"], active: true, note: "Minta adat" }
+    ]
+  };
+}
+function demoLoad() {
+  if (demoData) return demoData;
+  try { const raw = localStorage.getItem(LS_KEY); if (raw) demoData = JSON.parse(raw); } catch (e) { /* nincs tár */ }
+  if (!demoData) demoData = demoSeed();
+  return demoData;
+}
+function demoSave() { try { localStorage.setItem(LS_KEY, JSON.stringify(demoData)); } catch (e) { /* nincs tár */ } }
+function demoUpsert(rec) {
+  const d = demoLoad();
+  const i = d.records.findIndex((r) => r.id === rec.id);
+  if (i >= 0) d.records[i] = rec; else d.records.push(rec);
+}
+function demoApi(action, p) {
+  const d = demoLoad();
+  if (action === "list") return { ok: true, records: d.records, fallback: d.fallback };
+  if (action === "upsert") demoUpsert(p.record);
+  else if (action === "bulkUpsert") p.records.forEach(demoUpsert);
+  else if (action === "delete") d.records = d.records.filter((r) => r.id !== p.id);
+  else if (action === "setFallback") d.fallback = p.fallback;
+  demoSave();
+  return { ok: true };
+}
+async function api(action, payload) {
+  if (DEMO) return demoApi(action, payload || {});
+  const res = await fetch(CONFIG.API_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, code: state.code, ...(payload || {}) })
+  });
+  if (res.status === 401 || res.status === 403) throw new Error("AUTH");
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || "A szerver hibát jelzett.");
+  return data;
+}
+function cleanRecord(r) {
+  return {
+    id: String(r.id || uid()),
+    name: String(r.name || ""),
+    keywords: Array.isArray(r.keywords) ? r.keywords.map(String) : [],
+    emails: Array.isArray(r.emails) ? r.emails.map(String) : [],
+    active: r.active !== false,
+    note: String(r.note || "")
+  };
+}
+async function loadAll() {
+  state.error = "";
+  try {
+    const data = await api("list");
+    state.records = (data.records || []).map(cleanRecord);
+    if (data.fallback) state.fallback = String(data.fallback);
+    state.loaded = true;
+  } catch (e) {
+    if (e.message === "AUTH") throw e;
+    state.error = "A címtár most nem érhető el. Ellenőrizd a hálózatot, majd próbáld újra.";
+  }
+  render();
+}
+
+/* ===== MEGJELENÍTÉS ===== */
+function render() {
+  $("#fb-input").value = state.fallback;
+  renderList();
+  renderVerdict();
+}
+function renderList() {
+  const ul = $("#list");
+  ul.replaceChildren();
+  const q = norm(state.query);
+  const rows = state.records
+    .filter((r) => !q || norm([r.name, ...r.keywords, ...r.emails, r.note].join(" ")).includes(q))
+    .sort((a, b) => a.name.localeCompare(b.name, "hu"));
+
+  if (state.error) {
+    $("#count").textContent = "";
+    ul.append(h("li", { class: "empty" },
+      h("strong", null, "Nem sikerült betölteni a címtárat"),
+      state.error, " ",
+      h("button", { type: "button", class: "link", onclick: () => loadAll() }, "Újrapróbálás")));
+    return;
+  }
+  if (!state.loaded) { $("#count").textContent = "Betöltés…"; return; }
+
+  $("#count").textContent = `${rows.length} egység a(z) ${state.records.length} közül`;
+  if (!state.records.length) {
+    ul.append(h("li", { class: "empty" },
+      h("strong", null, "Még nincs felvett szervezeti egység"),
+      "Vegyél fel egyet a bal oldali űrlapon, vagy illessz be többet a Tömeges felvitelben."));
+    return;
+  }
+  if (!rows.length) {
+    ul.append(h("li", { class: "empty" }, h("strong", null, "Nincs találat"), "Próbálj másik névre vagy rövidítésre keresni."));
+    return;
+  }
+  for (const r of rows) {
+    ul.append(h("li", { class: "row" + (r.active ? "" : " off") },
+      h("div", { class: "who" },
+        h("strong", null, r.name),
+        r.keywords.length ? h("span", { class: "kw" }, "Írásmódok: " + r.keywords.join(", ")) : null,
+        r.note ? h("span", { class: "kw" }, r.note) : null),
+      h("div", { class: "mail" }, r.emails.map((m) => h("span", null, m))),
+      h("div", { class: "act" },
+        h("span", { class: "state " + (r.active ? "on" : "paused") }, r.active ? "Aktív" : "Szünetel"),
+        h("button", { type: "button", class: "link", "aria-label": "Szerkesztés: " + r.name, onclick: () => editRecord(r.id) }, "Szerkesztés"),
+        h("button", { type: "button", class: "link danger", "aria-label": "Törlés: " + r.name, onclick: () => askDelete(r) }, "Törlés"))));
+  }
+}
+function renderVerdict() {
+  const out = $("#t-out");
+  const text = $("#t-input").value;
+  out.className = "verdict";
+  out.replaceChildren();
+  if (!text.trim()) {
+    out.classList.add("idle");
+    out.textContent = "Itt jelenik meg, melyik egységhez sorolná a rendszer.";
+    return;
+  }
+  const res = findUnit(text, state.records);
+  if (res.status === "match") {
+    out.classList.add("ok");
+    const r = res.hit.record;
+    out.append("Egyezés: ", h("strong", null, r.name), ` (találat: „${res.hit.term}”). Címzett: ${r.emails.join(", ") || "nincs megadva"}.`);
+    if (!r.emails.length) { out.classList.remove("ok"); out.classList.add("bad"); out.append(" Ehhez az egységhez nincs e-mail cím, ezért a tartalék címre megy."); }
+  } else if (res.status === "ambiguous") {
+    out.classList.add("bad");
+    out.append("Több egység is egyezik: ", h("strong", null, res.hits.map((x) => x.record.name).join(", ")), `. Az oklevél a tartalék címre megy: ${state.fallback}.`);
+  } else {
+    out.classList.add("bad");
+    out.append("Nincs egyezés. Az oklevél a tartalék címre megy: ", h("strong", null, state.fallback), ".");
+  }
+}
+
+/* ===== ŰRLAP ===== */
+function resetForm() {
+  $("#form").reset();
+  $("#f-id").value = "";
+  $("#f-active").checked = true;
+  $("#form-title").textContent = "Új szervezeti egység";
+  $("#f-cancel").hidden = true;
+  $("#form-error").textContent = "";
+}
+function editRecord(id) {
+  const r = state.records.find((x) => x.id === id);
+  if (!r) return;
+  $("#f-id").value = r.id;
+  $("#f-name").value = r.name;
+  $("#f-keywords").value = r.keywords.join(", ");
+  $("#f-emails").value = r.emails.join("\n");
+  $("#f-note").value = r.note;
+  $("#f-active").checked = r.active;
+  $("#form-title").textContent = "Szervezeti egység szerkesztése";
+  $("#f-cancel").hidden = false;
+  $("#form-error").textContent = "";
+  $("#form").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  $("#f-name").focus();
+}
+function readForm() {
+  return cleanRecord({
+    id: $("#f-id").value || uid(),
+    name: $("#f-name").value.trim(),
+    keywords: parseKeywords($("#f-keywords").value),
+    emails: parseEmails($("#f-emails").value),
+    active: $("#f-active").checked,
+    note: $("#f-note").value.trim()
+  });
+}
+function validate(rec) {
+  if (!rec.name) return "Add meg a szervezeti egység nevét.";
+  if (!rec.emails.length) return "Adj meg legalább egy e-mail címet.";
+  const bad = rec.emails.find((e) => !EMAIL_RE.test(e));
+  if (bad) return `Ez nem érvényes e-mail cím: ${bad}`;
+  return findConflict(rec, state.records);
+}
+async function onSave(ev) {
+  ev.preventDefault();
+  const rec = readForm();
+  const err = validate(rec);
+  $("#form-error").textContent = err;
+  if (err) return;
+  const btn = $("#f-save");
+  btn.disabled = true;
+  try {
+    await api("upsert", { record: rec });
+    await loadAll();
+    resetForm();
+    toast("Mentve: " + rec.name);
+  } catch (e) {
+    $("#form-error").textContent = e.message === "AUTH" ? "A belépőkód érvénytelen. Frissítsd az oldalt, és lépj be újra." : "A mentés nem sikerült: " + e.message;
+  } finally { btn.disabled = false; }
+}
+
+/* ===== TÖRLÉS ===== */
+let pendingDelete = null;
+function askDelete(r) {
+  pendingDelete = r;
+  $("#del-text").textContent = `A(z) ${r.name} egység törlése után az oklevelei a tartalék címre mennek.`;
+  $("#del-dialog").showModal();
+}
+async function confirmDelete() {
+  const r = pendingDelete;
+  if (!r) return;
+  $("#del-dialog").close();
+  try {
+    await api("delete", { id: r.id });
+    await loadAll();
+    if ($("#f-id").value === r.id) resetForm();
+    toast("Törölve: " + r.name);
+  } catch (e) { toast("A törlés nem sikerült: " + e.message); }
+  pendingDelete = null;
+}
+
+/* ===== TARTALÉK CÍM ===== */
+async function saveFallback() {
+  const v = $("#fb-input").value.trim();
+  if (!EMAIL_RE.test(v)) { toast("Add meg a tartalék címet érvényes e-mail formátumban."); $("#fb-input").focus(); return; }
+  try {
+    await api("setFallback", { fallback: v });
+    state.fallback = v;
+    renderVerdict();
+    toast("Mentve: tartalék cím");
+  } catch (e) { toast("A mentés nem sikerült: " + e.message); }
+}
+
+/* ===== TÖMEGES FELVITEL ÉS EXPORT ===== */
+function parseBulk(text) {
+  const recs = [], errors = [];
+  text.split(/\r?\n/).forEach((line, i) => {
+    if (!line.trim()) return;
+    const parts = line.split(";").map((s) => s.trim());
+    if (parts.length < 3) { errors.push(`${i + 1}. sor: három, pontosvesszővel tagolt rész kell (név; írásmódok; e-mail).`); return; }
+    const name = parts[0];
+    const emails = parseEmails(parts.slice(2).join(","));
+    if (!name) { errors.push(`${i + 1}. sor: hiányzik a név.`); return; }
+    const badMail = emails.find((e) => !EMAIL_RE.test(e));
+    if (!emails.length || badMail) { errors.push(`${i + 1}. sor: ${badMail ? "érvénytelen e-mail cím: " + badMail : "hiányzik az e-mail cím"}.`); return; }
+    const existing = state.records.find((r) => norm(r.name) === norm(name));
+    recs.push(cleanRecord({ id: existing ? existing.id : uid(), name, keywords: parseKeywords(parts[1]), emails, active: existing ? existing.active : true, note: existing ? existing.note : "" }));
+  });
+  // Ütközés a meglévőkkel és a beillesztett sorok között
+  const pool = state.records.filter((r) => !recs.some((n) => n.id === r.id));
+  recs.forEach((r, i) => {
+    const c = findConflict(r, pool.concat(recs.slice(0, i)));
+    if (c) errors.push(`${r.name}: ${c}`);
+  });
+  return { recs, errors };
+}
+async function saveBulk() {
+  const { recs, errors } = parseBulk($("#bulk-text").value);
+  const box = $("#bulk-error");
+  if (!recs.length && !errors.length) { box.textContent = "Illessz be legalább egy sort."; return; }
+  if (errors.length) { box.textContent = errors.join(" "); return; }
+  try {
+    await api("bulkUpsert", { records: recs });
+    await loadAll();
+    $("#bulk-dialog").close();
+    $("#bulk-text").value = "";
+    box.textContent = "";
+    toast(`Mentve: ${recs.length} egység`);
+  } catch (e) { box.textContent = "A mentés nem sikerült: " + e.message; }
+}
+function exportCsv() {
+  const esc = (s) => `"${String(s).replace(/"/g, '""')}"`;
+  const lines = [["Név", "Írásmódok", "E-mail", "Aktív", "Megjegyzés"].map(esc).join(";")];
+  state.records.slice().sort((a, b) => a.name.localeCompare(b.name, "hu")).forEach((r) => {
+    lines.push([r.name, r.keywords.join(", "), r.emails.join(", "), r.active ? "igen" : "nem", r.note].map(esc).join(";"));
+  });
+  const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = h("a", { href: url, download: `szervezeti-cimtar_v${CONFIG.VERSION}_${new Date().toISOString().slice(0, 10)}.csv` });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast("Exportálva: CSV");
+}
+
+/* ===== BELÉPÉS ÉS INDÍTÁS ===== */
+function setGated(on) {
+  $("#gate").hidden = !on;
+  const app = $("#app");
+  if (on) app.setAttribute("inert", ""); else app.removeAttribute("inert");
+  if (on) setTimeout(() => $("#gate-code").focus(), 0);
+}
+async function tryEnter(code) {
+  state.code = code;
+  try {
+    await loadAll();
+    if (state.loaded || state.error) {
+      try { sessionStorage.setItem("cimtar-code", code); } catch (e) { /* nincs tár */ }
+      setGated(false);
+      $("#gate-error").textContent = "";
+    }
+  } catch (e) {
+    if (e.message === "AUTH") {
+      $("#gate-error").textContent = "Hibás belépőkód. Próbáld újra.";
+      try { sessionStorage.removeItem("cimtar-code"); } catch (er) { /* nincs tár */ }
+      setGated(true);
+    }
+  }
+}
+
+function init() {
+  $("#form").addEventListener("submit", onSave);
+  $("#f-cancel").addEventListener("click", resetForm);
+  $("#fb-save").addEventListener("click", saveFallback);
+  $("#q").addEventListener("input", (e) => { state.query = e.target.value; renderList(); });
+  $("#t-input").addEventListener("input", renderVerdict);
+  $("#del-cancel").addEventListener("click", () => $("#del-dialog").close());
+  $("#del-confirm").addEventListener("click", confirmDelete);
+  $("#bulk-open").addEventListener("click", () => { $("#bulk-error").textContent = ""; $("#bulk-dialog").showModal(); });
+  $("#bulk-cancel").addEventListener("click", () => $("#bulk-dialog").close());
+  $("#bulk-save").addEventListener("click", saveBulk);
+  $("#export").addEventListener("click", exportCsv);
+  $("#gate-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const code = $("#gate-code").value;
+    if (!code) { $("#gate-error").textContent = "Add meg a belépőkódot."; return; }
+    tryEnter(code);
+  });
+
+  if (DEMO) {
+    $("#demo").hidden = false;
+    loadAll();
+    return;
+  }
+  let saved = "";
+  try { saved = sessionStorage.getItem("cimtar-code") || ""; } catch (e) { /* nincs tár */ }
+  setGated(true);
+  if (saved) tryEnter(saved);
+}
+init();
+</script>
+</body>
+</html>
